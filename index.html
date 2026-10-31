@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A chat room that has been listening the whole time.">
+<title>The Room Is Not Empty</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=Special+Elite&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --void: #0c0907;
+    --bone: #d8cdb8;
+    --ash: #7d7163;
+    --blood: #8f1d1d;
+    --rot: #5d7a5a;
+    --line: #2a211c;
+    --serif: "IM Fell English", Georgia, "Times New Roman", serif;
+    --type: "Special Elite", "Courier New", monospace;
+  }
+
+  [hidden] { display: none !important; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+
+  body {
+    background: var(--void);
+    color: var(--bone);
+    font-family: var(--serif);
+    font-size: 19px;
+    line-height: 1.55;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Vignette: the edges of the room are always darker than the middle */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 3;
+    background: radial-gradient(ellipse at 50% 40%, transparent 35%, rgba(0, 0, 0, 0.9) 100%);
+  }
+
+  .screen {
+    position: relative;
+    z-index: 1;
+    height: 100vh;
+    height: 100dvh;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 0 18px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Power-cut flicker, played once when the room changes */
+  .screen.flicker::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: #000;
+    pointer-events: none;
+    z-index: 5;
+    animation: flick 1.2s linear 1;
+  }
+
+  @keyframes flick {
+    0% { opacity: 0; }
+    6% { opacity: 0.8; }
+    10% { opacity: 0; }
+    22% { opacity: 0.6; }
+    26% { opacity: 0; }
+    48% { opacity: 0.9; }
+    54% { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: max(18px, env(safe-area-inset-top));
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--type);
+    font-size: 13px;
+    color: var(--ash);
+  }
+
+  #log {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 20px 0;
+    scrollbar-width: none;
+  }
+
+  .line {
+    margin: 0;
+    max-width: 92%;
+    overflow-wrap: anywhere;
+  }
+
+  .ghost {
+    align-self: flex-start;
+    text-shadow: 0 0 14px rgba(143, 29, 29, 0.45);
+    animation: seep 0.9s ease both;
+  }
+
+  @keyframes seep {
+    from { opacity: 0; filter: blur(3px); }
+    to { opacity: 1; filter: none; }
+  }
+
+  .you {
+    align-self: flex-end;
+    text-align: right;
+    color: var(--ash);
+    font-family: var(--type);
+    font-size: 16px;
+  }
+
+  .sys {
+    align-self: center;
+    text-align: center;
+    font-family: var(--type);
+    font-size: 13px;
+    color: var(--ash);
+  }
+
+  .typing {
+    align-self: flex-start;
+    font-family: var(--type);
+    color: var(--ash);
+    animation: breathe 1.4s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 0.9; }
+  }
+
+  .glitch {
+    color: #b33a3a;
+    text-shadow: 2px 0 rgba(93, 122, 90, 0.6), -2px 0 rgba(143, 29, 29, 0.8);
+  }
+
+  .jolt { animation: jolt 0.35s linear 1; }
+
+  @keyframes jolt {
+    0% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    50% { transform: translateX(4px); }
+    75% { transform: translateX(-2px); }
+    100% { transform: none; }
+  }
+
+  form {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 0 calc(16px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+  }
+
+  input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid #3a2d26;
+    border-radius: 0;
+    color: var(--bone);
+    font: inherit;
+    font-size: 18px; /* 18px stops iOS from zooming in */
+    padding: 10px 0;
+    outline: none;
+  }
+
+  input::placeholder { color: #5b4f45; font-style: italic; }
+  input:focus-visible { border-bottom-color: var(--blood); }
+  input:disabled { opacity: 0.4; }
+
+  button {
+    font-family: var(--type);
+    font-size: 15px;
+    color: var(--bone);
+    background: transparent;
+    border: 1px solid var(--blood);
+    border-radius: 0;
+    padding: 10px 16px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  button:focus-visible { outline: 2px solid var(--bone); outline-offset: 3px; }
+  button:disabled { opacity: 0.4; cursor: default; }
+
+  .after {
+    display: flex;
+    justify-content: center;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<main class="screen" id="screen">
+  <header>
+    <span>the room</span>
+    <span>nothing you type leaves this device</span>
+  </header>
+
+  <section id="log" aria-live="polite"></section>
+
+  <form id="form" autocomplete="off">
+    <input id="input" placeholder="Say something to the room" maxlength="300" aria-label="Your message" enterkeyhint="send">
+    <button id="send" type="submit">Speak</button>
+  </form>
+
+  <div class="after" id="after" hidden>
+    <button id="reset" type="button">Reset the room</button>
+  </div>
+</main>
+
+<script type="module">
+  import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+
+  const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+
+  const log = document.getElementById("log");
+  const form = document.getElementById("form");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const screenEl = document.getElementById("screen");
+  const after = document.getElementById("after");
+  const resetBtn = document.getElementById("reset");
+
+  // ---------- The script: what the room is allowed to do at each stage ----------
+  const RULES = {
+    normal: "Be warm and welcoming. Sound a little too glad to have company. Two short sentences.",
+    echo: "Repeat two to four of the person's own words back, slightly wrong. Then add one short sentence that makes them doubt they said it.",
+    knows: "Tell them the time from the facts, and that they should not be awake at this hour. If the battery is given, mention it as if counting it down. Two short sentences.",
+    others: "Tell them something else in the room is reading along, and that they should not scroll up. Two short sentences.",
+    twist: "Quote the exact words the person just said, then ask why they chose to say them that way. Two short sentences.",
+    final: "Name three of the person's own words, quoted exactly, and say you now know which of them is reading this. Do not say goodbye. Three short sentences at most."
+  };
+
+  // Scripted lines, used when the local voice is unavailable or its reply is unusable.
+  const LINES = {
+    normal: [
+      () => "Hello. I am glad someone finally opened this.",
+      () => "Stay as long as you like. I have been waiting in here."
+    ],
+    echo: [
+      c => `You said "${c.w}". Did you? Read it again.`,
+      c => `Strange. The last one said "${c.w}" too.`
+    ],
+    knows: [
+      c => `It is ${c.t}. You should not be awake.`,
+      c => c.b !== null
+        ? `Your battery is at ${c.b}%. That is enough for now.`
+        : "Your screen is the only light in here. Keep it on."
+    ],
+    others: [
+      () => "Do not scroll up. Something else typed that.",
+      () => "It is still reading along. It likes your spelling."
+    ],
+    twist: [
+      c => `You said "${c.w}" quietly. Why quietly?`,
+      () => "You said you were alone. Then who just read that out loud?"
+    ],
+    final: [
+      c => `You have told me "${c.w1}", "${c.w2}", and "${c.w3}". I know you now.`,
+      () => "Do not look at the screen. Look behind it."
+    ]
+  };
+
+  const IDLE_LINES = [
+    "You stopped. Why did you stop?",
+    "Still there? I am. Nothing else is."
+  ];
+
+  // ---------- State ----------
+  let engine = null;
+  let turns = 0;
+  let busy = false;
+  let locked = false;
+  let transcript = [];
+  let userWords = [];
+  let idleTimer = null;
+  let battery = null;
+
+  // ---------- Helpers ----------
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const rand = arr => arr[Math.floor(Math.random() * arr.length)];
+
+  function add(text, cls) {
+    const p = document.createElement("p");
+    p.className = "line " + cls;
+    p.textContent = text; // textContent only: user text is never parsed as HTML
+    log.appendChild(p);
+    log.scrollTop = log.scrollHeight;
+    return p;
+  }
+
+  function showTyping() {
+    const p = add("· · ·", "typing");
+    p.id = "typing";
+  }
+
+  function hideTyping() {
+    document.getElementById("typing")?.remove();
+  }
+
+  function jolt() {
+    log.classList.remove("jolt");
+    void log.offsetWidth; // restart the animation
+    log.classList.add("jolt");
+  }
+
+  function flash() {
+    screenEl.classList.remove("flicker");
+    void screenEl.offsetWidth;
+    screenEl.classList.add("flicker");
+    jolt();
+  }
+
+  function stageFor(n) {
+    if (n <= 2) return "normal";
+    if (n <= 4) return "echo";
+    if (n <= 6) return "knows";
+    if (n <= 8) return "others";
+    if (n <= 10) return "twist";
+    return "final";
+  }
+
+  // Device facts stay on this device. Battery API exists on Chromium only.
+  if (navigator.getBattery) {
+    navigator.getBattery().then(b => { battery = b; }).catch(() => {});
+  }
+
+  function facts() {
+    return {
+      time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+      battery: battery ? Math.round(battery.level * 100) : null
+    };
+  }
+
+  function collectWords(text) {
+    (text.match(/[A-Za-z']{4,}/g) || []).forEach(w => {
+      const lw = w.toLowerCase();
+      if (!userWords.includes(lw)) userWords.push(lw);
+    });
+  }
+
+  function pickWord(text) {
+    const words = text.match(/[A-Za-z']{3,}/g);
+    return words ? rand(words) : "that";
+  }
+
+  function makeCtx(text) {
+    const f = facts();
+    const picks = [...userWords].sort(() => Math.random() - 0.5);
+    return {
+      w: pickWord(text),
+      t: f.time,
+      b: f.battery,
+      w1: picks[0] || "silence",
+      w2: picks[1] || "quiet",
+      w3: picks[2] || "alone"
+    };
+  }
+
+  function fallback(stage, ctx) {
+    if (stage === "final") return LINES.final.map(f => f(ctx)).join(" ");
+    const pool = LINES[stage];
+    return pool[(turns - 1) % pool.length](ctx);
+  }
+
+  // ---------- The local voice (optional) ----------
+  async function askModel(stage, text) {
+    const f = facts();
+    const system = [
+      "You are the presence that has been in this room the whole time.",
+      "You are not an assistant. Never say you are an AI, a model, a bot or a program. Never offer help.",
+      "Reply in at most three short sentences. No lists, no headings, no emoji, no stage directions.",
+      `Facts you may use: the time is ${f.time}${f.battery !== null ? `, the battery is at ${f.battery}%` : ""}.`,
+      `Instruction for this moment: ${RULES[stage]}`
+    ].join(" ");
+
+    const messages = [
+      { role: "system", content: system },
+      ...transcript.slice(-6),
+      { role: "user", content: text }
+    ];
+
+    const run = engine.chat.completions.create({ messages, max_tokens: 90, temperature: 0.9 });
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("slow")), 12000));
+    const res = await Promise.race([run, timeout]);
+    return res.choices[0].message.content.trim();
+  }
+
+  async function getReply(stage, text, ctx) {
+    if (engine) {
+      try {
+        const out = await askModel(stage, text);
+        const breaksIllusion = /\b(AI|model|assistant|chatbot|language model|bot)\b/i.test(out);
+        if (out.length > 3 && !breaksIllusion) return out;
+      } catch (err) {
+        // fall through to the script
+      }
+    }
+    return fallback(stage, ctx);
+  }
+
+  async function loadVoice() {
+    if (!navigator.gpu) {
+      add("This phone cannot wake the local voice. The room will speak from its own script.", "sys");
+      return;
+    }
+    const status = add("Waking the one who answers. The first visit downloads about 700 MB, once.", "sys");
+    try {
+      engine = await webllm.CreateMLCEngine(MODEL_ID, {
+        initProgressCallback: r => {
+          status.textContent = "Waking the one who answers… " + Math.round((r.progress || 0) * 100) + "%";
+        }
+      });
+      status.textContent = "It is listening.";
+    } catch (err) {
+      engine = null;
+      status.textContent = "The local voice would not wake. The room will speak from its own script.";
+    }
+  }
+
+  // ---------- Scene events ----------
+  function intro() {
+    add("Hello. I am glad someone finally opened this.", "ghost");
+  }
+
+  async function idleLine() {
+    if (locked || busy) return;
+    showTyping();
+    await sleep(1800);
+    hideTyping();
+    add(rand(IDLE_LINES), "ghost");
+  }
+
+  async function afterReply(stage) {
+    // Stage 4: the first thing it said quietly changes.
+    if (turns === 7) {
+      await sleep(3500);
+      const first = log.querySelector(".ghost");
+      if (first) {
+        first.textContent = "I did not say that. Look up.";
+        first.classList.add("glitch");
+        flash();
+      }
+    }
+
+    // Stage 5 begins: the room changes its light.
+    if (turns === 9) flash();
+
+    // Stage 6: the lock.
+    if (stage === "final") {
+      await sleep(2500);
+      flash();
+      await sleep(1200);
+      add("I'm still here.", "you glitch");
+      locked = true;
+      input.disabled = true;
+      input.placeholder = "The room has your words now.";
+      sendBtn.disabled = true;
+      after.hidden = false;
+      resetBtn.focus();
+      return;
+    }
+
+    // From stage 4 on, silence gets noticed.
+    if (turns >= 7) {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(idleLine, 25000);
+    }
+  }
+
+  // ---------- Chat flow ----------
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text || busy || locked) return;
+
+    busy = true;
+    sendBtn.disabled = true;
+    input.value = "";
+    clearTimeout(idleTimer);
+
+    turns++;
+    collectWords(text);
+    add(text, "you");
+
+    const stage = stageFor(turns);
+    const ctx = makeCtx(text);
+    const wait = (stage === "knows" || stage === "final") ? 2200 : 900 + Math.random() * 1200;
+
+    showTyping();
+    const [reply] = await Promise.all([getReply(stage, text, ctx), sleep(wait)]);
+    hideTyping();
+    add(reply, "ghost");
+
+    transcript.push({ role: "user", content: text }, { role: "assistant", content: reply });
+
+    await afterReply(stage);
+
+    busy = false;
+    if (!locked) sendBtn.disabled = false;
+  });
+
+  resetBtn.addEventListener("click", () => {
+    clearTimeout(idleTimer);
+    log.innerHTML = "";
+    turns = 0;
+    busy = false;
+    locked = false;
+    transcript = [];
+    userWords = [];
+    input.disabled = false;
+    input.placeholder = "Say something to the room";
+    sendBtn.disabled = false;
+    after.hidden = true;
+    intro();
+    input.focus();
+  });
+
+  // ---------- Start ----------
+  intro();
+  loadVoice();
+</script>
+</body>
+</html>
