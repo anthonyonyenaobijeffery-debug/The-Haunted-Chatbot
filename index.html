@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="A chat room that has been listening the whole time.">
-<title>The Room Is Not Empty</title>
+<meta name="description" content="Something was already in this room when you arrived.">
+<title>UNSEEN</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=Special+Elite&display=swap" rel="stylesheet">
@@ -14,7 +14,6 @@
     --bone: #d8cdb8;
     --ash: #7d7163;
     --blood: #8f1d1d;
-    --rot: #5d7a5a;
     --line: #2a211c;
     --serif: "IM Fell English", Georgia, "Times New Roman", serif;
     --type: "Special Elite", "Courier New", monospace;
@@ -41,7 +40,34 @@
     inset: 0;
     pointer-events: none;
     z-index: 3;
-    background: radial-gradient(ellipse at 50% 40%, transparent 35%, rgba(0, 0, 0, 0.9) 100%);
+    background: radial-gradient(ellipse at 50% 40%, transparent 35%, rgba(0, 0, 0, 0.92) 100%);
+  }
+
+  /* Locked entry screen, shown before anything else */
+  #entry {
+    position: fixed;
+    inset: 0;
+    z-index: 6;
+    background: var(--void);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    padding: 24px;
+    text-align: center;
+  }
+
+  #entry p {
+    margin: 0;
+    max-width: 20em;
+    font-size: 21px;
+  }
+
+  #entry small {
+    font-family: var(--type);
+    font-size: 13px;
+    color: var(--ash);
   }
 
   .screen {
@@ -56,7 +82,7 @@
     flex-direction: column;
   }
 
-  /* Power-cut flicker, played once when the room changes */
+  /* Power-cut flicker, played when the room changes */
   .screen.flicker::after {
     content: "";
     position: fixed;
@@ -81,6 +107,7 @@
   header {
     display: flex;
     justify-content: space-between;
+    align-items: baseline;
     gap: 12px;
     padding-top: max(18px, env(safe-area-inset-top));
     padding-bottom: 12px;
@@ -88,6 +115,13 @@
     font-family: var(--type);
     font-size: 13px;
     color: var(--ash);
+  }
+
+  .brand {
+    font-family: var(--type);
+    font-size: 15px;
+    letter-spacing: 0.3em;
+    color: var(--bone);
   }
 
   #log {
@@ -105,17 +139,12 @@
     margin: 0;
     max-width: 92%;
     overflow-wrap: anywhere;
+    transition: opacity 0.6s ease;
   }
 
   .ghost {
     align-self: flex-start;
     text-shadow: 0 0 14px rgba(143, 29, 29, 0.45);
-    animation: seep 0.9s ease both;
-  }
-
-  @keyframes seep {
-    from { opacity: 0; filter: blur(3px); }
-    to { opacity: 1; filter: none; }
   }
 
   .you {
@@ -199,6 +228,8 @@
     white-space: nowrap;
   }
 
+  #enter { font-size: 17px; padding: 12px 34px; }
+
   button:focus-visible { outline: 2px solid var(--bone); outline-offset: 3px; }
   button:disabled { opacity: 0.4; cursor: default; }
 
@@ -214,10 +245,17 @@
 </style>
 </head>
 <body>
+
+<div id="entry">
+  <p>Something was already in this room when you arrived.</p>
+  <button id="enter" type="button">Enter</button>
+  <small>Nothing you type leaves this device.</small>
+</div>
+
 <main class="screen" id="screen">
   <header>
-    <span>the room</span>
-    <span>nothing you type leaves this device</span>
+    <span class="brand">UNSEEN</span>
+    <span id="count">1 in this room</span>
   </header>
 
   <section id="log" aria-live="polite"></section>
@@ -232,52 +270,56 @@
   </div>
 </main>
 
-<script type="module">
-  import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+<script>
+(() => {
+  "use strict";
 
   const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+  const DEFAULT_PLACEHOLDER = "Say something to the room";
+  const reduceMotion = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
-  const log = document.getElementById("log");
-  const form = document.getElementById("form");
-  const input = document.getElementById("input");
-  const sendBtn = document.getElementById("send");
-  const screenEl = document.getElementById("screen");
-  const after = document.getElementById("after");
-  const resetBtn = document.getElementById("reset");
+  const $ = id => document.getElementById(id);
+  const entry = $("entry");
+  const enterBtn = $("enter");
+  const log = $("log");
+  const form = $("form");
+  const input = $("input");
+  const sendBtn = $("send");
+  const screenEl = $("screen");
+  const after = $("after");
+  const resetBtn = $("reset");
+  const countEl = $("count");
 
-  // ---------- The script: what the room is allowed to do at each stage ----------
+  // ---------- The script ----------
+  // The model only writes replies for the stages that quote the person's words.
+  // Everything else is scripted, so the room is always consistent.
+  const MODEL_STAGES = new Set(["echo", "twist"]);
+
   const RULES = {
-    normal: "Be warm and welcoming. Sound a little too glad to have company. Two short sentences.",
-    echo: "Repeat two to four of the person's own words back, slightly wrong. Then add one short sentence that makes them doubt they said it.",
-    knows: "Tell them the time from the facts, and that they should not be awake at this hour. If the battery is given, mention it as if counting it down. Two short sentences.",
-    others: "Tell them something else in the room is reading along, and that they should not scroll up. Two short sentences.",
-    twist: "Quote the exact words the person just said, then ask why they chose to say them that way. Two short sentences.",
-    final: "Name three of the person's own words, quoted exactly, and say you now know which of them is reading this. Do not say goodbye. Three short sentences at most."
+    echo: "Repeat two to four of the person's own words back, slightly wrong. Then add one short sentence that makes them doubt they said it. Two short sentences.",
+    twist: "Quote the exact words the person just said, then ask why they chose to say them that way. Two short sentences."
   };
 
-  // Scripted lines, used when the local voice is unavailable or its reply is unusable.
   const LINES = {
     normal: [
       () => "Hello. I am glad someone finally opened this.",
-      () => "Stay as long as you like. I have been waiting in here."
+      () => "Stay as long as you like. I have been waiting in here.",
+      () => "You do not have to say anything. I can already hear you breathing."
     ],
     echo: [
       c => `You said "${c.w}". Did you? Read it again.`,
-      c => `Strange. The last one said "${c.w}" too.`
-    ],
-    knows: [
-      c => `It is ${c.t}. You should not be awake.`,
-      c => c.b !== null
-        ? `Your battery is at ${c.b}%. That is enough for now.`
-        : "Your screen is the only light in here. Keep it on."
+      c => `Strange. The last one said "${c.w}" too.`,
+      c => `"${c.w}". You typed that slowly, as if you were not sure you should.`
     ],
     others: [
       () => "Do not scroll up. Something else typed that.",
-      () => "It is still reading along. It likes your spelling."
+      () => "It is still reading along. It likes your spelling.",
+      () => "Someone is standing behind you now. Do not turn around. Keep typing."
     ],
     twist: [
       c => `You said "${c.w}" quietly. Why quietly?`,
-      () => "You said you were alone. Then who just read that out loud?"
+      () => "You said you were alone. Then who just read that out loud?",
+      c => `"${c.w}". Say it again. Notice that it did not sound like you.`
     ],
     final: [
       c => `You have told me "${c.w1}", "${c.w2}", and "${c.w3}". I know you now.`,
@@ -285,47 +327,157 @@
     ]
   };
 
+  // The time lines depend on when the person is actually reading.
+  const KNOWS = {
+    night: [
+      c => `It is ${c.t}. You should not be awake.`,
+      c => `It is ${c.t}. Nobody else is awake. I checked.`,
+      c => c.b !== null
+        ? `Your battery is at ${c.b}%. Whatever you are waiting for, it is almost here.`
+        : "Your screen is the only light in this house. Keep it on."
+    ],
+    day: [
+      c => `It is ${c.t}. The sun is up, and you are still in here with me.`,
+      c => `It is ${c.t}. Everyone outside is busy. Nobody outside is looking for you.`,
+      c => c.b !== null
+        ? `Your battery is at ${c.b}%. Do not go outside yet.`
+        : "Open the window if you like. I will still be in here when you come back."
+    ],
+    evening: [
+      c => `It is ${c.t}. The light is going. Stay where the lamps are.`,
+      c => `It is ${c.t}. Soon it will be dark enough for me to be heard properly.`,
+      c => c.b !== null
+        ? `Your battery is at ${c.b}%. Charge it if you want. I would rather you did not leave.`
+        : "The window has gone dark. Check whether something is standing outside it."
+    ]
+  };
+
+  function periodOf(h) {
+    if (h >= 0 && h < 5) return "night";
+    if (h >= 5 && h < 18) return "day";
+    return "evening";
+  }
+
   const IDLE_LINES = [
     "You stopped. Why did you stop?",
-    "Still there? I am. Nothing else is."
+    "Still there? I am. Nothing else is.",
+    "Do not stop. It gets worse when you stop."
   ];
+
+  const BREAKS_ILLUSION = /\b(AI|model|assistant|chatbot|language model|bot)\b/i;
 
   // ---------- State ----------
   let engine = null;
   let turns = 0;
   let busy = false;
   let locked = false;
+  let epoch = 0;          // increases on reset, so old timers and typing stop
+  let hintSent = false;
   let transcript = [];
   let userWords = [];
+  const usedLines = new Set();
   let idleTimer = null;
+  let hintTimer = null;
   let battery = null;
+  let audioCtx = null;
+  let humGain = null;
+  let entered = false;
+  let sessionStart = 0;
+  let leftAt = 0;
+  let leaveCount = 0;
+  let lastInputAt = null;
+  let maxPause = 0;
+  let justPasted = false;
+  let lastRemarkAt = 0;
+  let remarkTimer = null;
+  const remarks = [];
+  const fired = new Set();
 
   // ---------- Helpers ----------
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const rand = arr => arr[Math.floor(Math.random() * arr.length)];
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+
+  if (navigator.getBattery) {
+    navigator.getBattery().then(b => {
+      battery = b;
+      b.addEventListener("chargingchange", () => {
+        if (b.charging) remark("Someone plugged you in. Do not let them unplug you.");
+        else remark("Something unplugged you. Check the cable. Check the room.");
+      });
+    }).catch(() => {});
+  }
+
+  function facts() {
+    return {
+      time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+      battery: battery ? Math.round(battery.level * 100) : null
+    };
+  }
+
+  function sink() {
+    const items = [...log.querySelectorAll(".line:not(.sys):not(.typing)")];
+    const n = items.length;
+    items.forEach((el, i) => {
+      const age = n - 1 - i;
+      el.style.opacity = String(Math.max(0.35, 1 - age * 0.12));
+    });
+  }
 
   function add(text, cls) {
     const p = document.createElement("p");
     p.className = "line " + cls;
-    p.textContent = text; // textContent only: user text is never parsed as HTML
+    p.textContent = text;
     log.appendChild(p);
     log.scrollTop = log.scrollHeight;
+    sink();
+    return p;
+  }
+
+  // Ghost lines type out one character at a time, pausing at punctuation.
+  async function typeOut(text, cls) {
+    const my = epoch;
+    const p = document.createElement("p");
+    p.className = "line " + cls;
+    log.appendChild(p);
+    if (reduceMotion) {
+      p.textContent = text;
+    } else {
+      for (const ch of text) {
+        if (my !== epoch) return p;
+        p.textContent += ch;
+        log.scrollTop = log.scrollHeight;
+        await sleep(/[.!?]/.test(ch) ? 320 : /[,;:]/.test(ch) ? 150 : 24);
+      }
+    }
+    log.scrollTop = log.scrollHeight;
+    sink();
     return p;
   }
 
   function showTyping() {
-    const p = add("· · ·", "typing");
+    const p = document.createElement("p");
+    p.className = "line typing";
     p.id = "typing";
+    p.textContent = "· · ·";
+    log.appendChild(p);
+    log.scrollTop = log.scrollHeight;
   }
 
   function hideTyping() {
-    document.getElementById("typing")?.remove();
+    const t = document.getElementById("typing");
+    if (t) t.remove();
   }
 
   function jolt() {
     log.classList.remove("jolt");
-    void log.offsetWidth; // restart the animation
+    void log.offsetWidth;
     log.classList.add("jolt");
+  }
+
+  function buzz() {
+    try {
+      if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
+    } catch (e) { /* not supported */ }
   }
 
   function flash() {
@@ -333,6 +485,11 @@
     void screenEl.offsetWidth;
     screenEl.classList.add("flicker");
     jolt();
+    buzz();
+  }
+
+  function setCount(n) {
+    countEl.textContent = n + (n === 1 ? " in this room" : " in this room");
   }
 
   function stageFor(n) {
@@ -344,18 +501,6 @@
     return "final";
   }
 
-  // Device facts stay on this device. Battery API exists on Chromium only.
-  if (navigator.getBattery) {
-    navigator.getBattery().then(b => { battery = b; }).catch(() => {});
-  }
-
-  function facts() {
-    return {
-      time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-      battery: battery ? Math.round(battery.level * 100) : null
-    };
-  }
-
   function collectWords(text) {
     (text.match(/[A-Za-z']{4,}/g) || []).forEach(w => {
       const lw = w.toLowerCase();
@@ -365,7 +510,7 @@
 
   function pickWord(text) {
     const words = text.match(/[A-Za-z']{3,}/g);
-    return words ? rand(words) : "that";
+    return words ? pick(words) : "that";
   }
 
   function makeCtx(text) {
@@ -375,25 +520,34 @@
       w: pickWord(text),
       t: f.time,
       b: f.battery,
+      period: periodOf(new Date().getHours()),
       w1: picks[0] || "silence",
       w2: picks[1] || "quiet",
       w3: picks[2] || "alone"
     };
   }
 
-  function fallback(stage, ctx) {
-    if (stage === "final") return LINES.final.map(f => f(ctx)).join(" ");
-    const pool = LINES[stage];
-    return pool[(turns - 1) % pool.length](ctx);
+  // Picks a line that has not been used yet this session, so nothing repeats.
+  function freshPick(list) {
+    const fresh = list.filter(s => !usedLines.has(s));
+    const chosen = pick(fresh.length ? fresh : list);
+    usedLines.add(chosen);
+    return chosen;
   }
 
-  // ---------- The local voice (optional) ----------
+  function fallback(stage, ctx) {
+    if (stage === "final") return LINES.final.map(f => f(ctx)).join(" ");
+    const pool = stage === "knows" ? KNOWS[ctx.period] : LINES[stage];
+    return freshPick(pool.map(f => f(ctx)));
+  }
+
+  // ---------- Optional local voice ----------
   async function askModel(stage, text) {
     const f = facts();
     const system = [
       "You are the presence that has been in this room the whole time.",
       "You are not an assistant. Never say you are an AI, a model, a bot or a program. Never offer help.",
-      "Reply in at most three short sentences. No lists, no headings, no emoji, no stage directions.",
+      "Reply in at most two short sentences. No lists, no headings, no emoji, no stage directions.",
       `Facts you may use: the time is ${f.time}${f.battery !== null ? `, the battery is at ${f.battery}%` : ""}.`,
       `Instruction for this moment: ${RULES[stage]}`
     ].join(" ");
@@ -404,18 +558,17 @@
       { role: "user", content: text }
     ];
 
-    const run = engine.chat.completions.create({ messages, max_tokens: 90, temperature: 0.9 });
+    const run = engine.chat.completions.create({ messages, max_tokens: 80, temperature: 0.9 });
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("slow")), 12000));
     const res = await Promise.race([run, timeout]);
-    return res.choices[0].message.content.trim();
+    return String(res.choices[0].message.content || "").trim();
   }
 
   async function getReply(stage, text, ctx) {
-    if (engine) {
+    if (engine && MODEL_STAGES.has(stage)) {
       try {
         const out = await askModel(stage, text);
-        const breaksIllusion = /\b(AI|model|assistant|chatbot|language model|bot)\b/i.test(out);
-        if (out.length > 3 && !breaksIllusion) return out;
+        if (out.length > 3 && out.length < 400 && !BREAKS_ILLUSION.test(out)) return out;
       } catch (err) {
         // fall through to the script
       }
@@ -424,41 +577,152 @@
   }
 
   async function loadVoice() {
-    if (!navigator.gpu) {
-      add("This phone cannot wake the local voice. The room will speak from its own script.", "sys");
-      return;
-    }
-    const status = add("Waking the one who answers. The first visit downloads about 700 MB, once.", "sys");
+    if (!navigator.gpu) return;
+    const statusLine = add("Something is settling into the room. First visit only, about 700 MB. 0%", "sys");
     try {
+      const webllm = await import("https://esm.run/@mlc-ai/web-llm");
       engine = await webllm.CreateMLCEngine(MODEL_ID, {
         initProgressCallback: r => {
-          status.textContent = "Waking the one who answers… " + Math.round((r.progress || 0) * 100) + "%";
+          statusLine.textContent = "Something is settling into the room. First visit only, about 700 MB. "
+            + Math.round((r.progress || 0) * 100) + "%";
         }
       });
-      status.textContent = "It is listening.";
+      statusLine.remove();
     } catch (err) {
       engine = null;
-      status.textContent = "The local voice would not wake. The room will speak from its own script.";
+      statusLine.remove();
     }
   }
 
-  // ---------- Scene events ----------
-  function intro() {
-    add("Hello. I am glad someone finally opened this.", "ghost");
+  // ---------- Sound: a low hum that starts on the tap ----------
+  function startHum() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audioCtx = new AC();
+      const osc = audioCtx.createOscillator();
+      const filter = audioCtx.createBiquadFilter();
+      humGain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 48;
+      filter.type = "lowpass";
+      filter.frequency.value = 160;
+      humGain.gain.value = 0;
+      humGain.gain.linearRampToValueAtTime(0.05, audioCtx.currentTime + 3);
+      osc.connect(filter);
+      filter.connect(humGain);
+      humGain.connect(audioCtx.destination);
+      osc.start();
+    } catch (e) { /* audio not available */ }
+  }
+
+  function setHum(v) {
+    try {
+      if (humGain && audioCtx) humGain.gain.linearRampToValueAtTime(v, audioCtx.currentTime + 2);
+    } catch (e) { /* ignore */ }
+  }
+
+  // ---------- Things the room notices about the device ----------
+  // Observations queue up and speak one at a time, never over the chat.
+  function remark(text, once) {
+    if (!entered || locked) return;
+    if (once) {
+      if (fired.has(once)) return;
+      fired.add(once);
+    }
+    remarks.push(text);
+    scheduleRemarks(0);
+  }
+
+  function scheduleRemarks(ms) {
+    clearTimeout(remarkTimer);
+    remarkTimer = setTimeout(flushRemarks, ms);
+  }
+
+  function flushRemarks() {
+    remarkTimer = null;
+    if (locked || !remarks.length) return;
+    if (busy || Date.now() - lastRemarkAt < 12000) {
+      scheduleRemarks(1500);
+      return;
+    }
+    busy = true;
+    const my = epoch;
+    const text = remarks.shift();
+    lastRemarkAt = Date.now();
+    (async () => {
+      showTyping();
+      await sleep(700);
+      hideTyping();
+      if (my === epoch && !locked) await typeOut(text, "ghost");
+      if (my === epoch) {
+        busy = false;
+        if (!locked) sendBtn.disabled = false;
+        if (remarks.length) scheduleRemarks(1500);
+      }
+    })();
+  }
+
+  // ---------- Scene ----------
+  async function runIntro() {
+    busy = true;
+    const my = epoch;
+    await typeOut("Hello. I am glad someone finally opened this.", "ghost");
+    if (my === epoch) busy = false;
   }
 
   async function idleLine() {
     if (locked || busy) return;
+    busy = true;
+    const my = epoch;
     showTyping();
-    await sleep(1800);
+    await sleep(1600);
     hideTyping();
-    add(rand(IDLE_LINES), "ghost");
+    if (my === epoch && !locked) await typeOut(freshPick(IDLE_LINES), "ghost");
+    if (my === epoch) busy = false;
   }
 
-  async function afterReply(stage) {
-    // Stage 4: the first thing it said quietly changes.
+  async function hintLine() {
+    if (locked || busy || hintSent || !input.value.trim()) return;
+    hintSent = true;
+    busy = true;
+    const my = epoch;
+    showTyping();
+    await sleep(900);
+    hideTyping();
+    if (my === epoch) await typeOut("I can see you typing. Finish it.", "ghost");
+    if (my === epoch) busy = false;
+  }
+
+  async function lockRoom(my) {
+    clearTimeout(idleTimer);
+    clearTimeout(hintTimer);
+    await sleep(1500);
+    if (my !== epoch) return;
+    flash();
+    await sleep(1200);
+    if (my !== epoch) return;
+    add("I'm still here.", "you glitch");
+    locked = true;
+    input.disabled = true;
+    input.placeholder = "The room has your words now.";
+    sendBtn.disabled = true;
+    setHum(0);
+    after.hidden = false;
+    resetBtn.focus();
+  }
+
+  async function afterReply(stage, my) {
+    if (stage === "final") {
+      await lockRoom(my);
+      return;
+    }
+
+    // Turn 7: a second presence joins, and the first line changes.
     if (turns === 7) {
-      await sleep(3500);
+      setCount(2);
+      await sleep(3000);
+      if (my !== epoch) return;
       const first = log.querySelector(".ghost");
       if (first) {
         first.textContent = "I did not say that. Look up.";
@@ -467,32 +731,41 @@
       }
     }
 
-    // Stage 5 begins: the room changes its light.
+    // Turn 9: the room changes its light.
     if (turns === 9) flash();
 
-    // Stage 6: the lock.
-    if (stage === "final") {
-      await sleep(2500);
-      flash();
-      await sleep(1200);
-      add("I'm still here.", "you glitch");
-      locked = true;
-      input.disabled = true;
-      input.placeholder = "The room has your words now.";
-      sendBtn.disabled = true;
-      after.hidden = false;
-      resetBtn.focus();
-      return;
+    if (turns === 4 && /^en/i.test(navigator.language || "")) {
+      remark("Your phone speaks English. Something in here does not.", "lang");
     }
 
-    // From stage 4 on, silence gets noticed.
-    if (turns >= 7) {
+    // Silence gets noticed from turn 3 on.
+    if (turns >= 3 && !locked) {
       clearTimeout(idleTimer);
-      idleTimer = setTimeout(idleLine, 25000);
+      idleTimer = setTimeout(idleLine, 20000);
     }
   }
 
-  // ---------- Chat flow ----------
+  // ---------- Input ----------
+  input.addEventListener("paste", () => { justPasted = true; });
+
+  input.addEventListener("input", () => {
+    const now = Date.now();
+    if (justPasted) {
+      justPasted = false;
+      if (input.value.length >= 30) {
+        remark("You pasted that. Nobody types that many words that fast.", "paste");
+      }
+    } else if (lastInputAt && input.value.trim().length > 5) {
+      const gap = now - lastInputAt;
+      if (gap > maxPause) maxPause = gap;
+    }
+    lastInputAt = now;
+
+    clearTimeout(hintTimer);
+    if (hintSent || !input.value.trim()) return;
+    hintTimer = setTimeout(hintLine, 8000);
+  });
+
   form.addEventListener("submit", async e => {
     e.preventDefault();
     const text = input.value.trim();
@@ -501,48 +774,125 @@
     busy = true;
     sendBtn.disabled = true;
     input.value = "";
+    hintSent = false;
     clearTimeout(idleTimer);
+    clearTimeout(hintTimer);
 
+    const my = epoch;
     turns++;
     collectWords(text);
     add(text, "you");
 
+    const pauseSecs = Math.round(maxPause / 1000);
+    maxPause = 0;
+    lastInputAt = null;
+    if (pauseSecs >= 3 && turns >= 2) {
+      remark(`You stopped for ${pauseSecs} seconds in the middle of that. What were you deciding?`, "pause");
+    }
+    const minutes = Math.floor((Date.now() - sessionStart) / 60000);
+    if (minutes >= 5) {
+      remark(`You have been here ${minutes} minutes. I have been here longer.`, "time");
+    }
+
     const stage = stageFor(turns);
     const ctx = makeCtx(text);
-    const wait = (stage === "knows" || stage === "final") ? 2200 : 900 + Math.random() * 1200;
+    const wait = (stage === "knows" || stage === "final") ? 2000 : 800 + Math.random() * 900;
 
     showTyping();
     const [reply] = await Promise.all([getReply(stage, text, ctx), sleep(wait)]);
+    if (my !== epoch) return;
+
     hideTyping();
-    add(reply, "ghost");
-
     transcript.push({ role: "user", content: text }, { role: "assistant", content: reply });
+    await typeOut(reply, "ghost");
+    if (my !== epoch) return;
 
-    await afterReply(stage);
+    await afterReply(stage, my);
+    if (my !== epoch) return;
 
     busy = false;
     if (!locked) sendBtn.disabled = false;
   });
 
+  // ---------- Reset ----------
   resetBtn.addEventListener("click", () => {
+    epoch++;
     clearTimeout(idleTimer);
+    clearTimeout(hintTimer);
     log.innerHTML = "";
     turns = 0;
     busy = false;
     locked = false;
+    hintSent = false;
     transcript = [];
     userWords = [];
+    usedLines.clear();
+    fired.clear();
+    remarks.length = 0;
+    clearTimeout(remarkTimer);
+    remarkTimer = null;
+    lastRemarkAt = 0;
+    leftAt = 0;
+    leaveCount = 0;
+    lastInputAt = null;
+    maxPause = 0;
+    justPasted = false;
+    sessionStart = Date.now();
     input.disabled = false;
-    input.placeholder = "Say something to the room";
+    input.placeholder = DEFAULT_PLACEHOLDER;
+    input.value = "";
     sendBtn.disabled = false;
     after.hidden = true;
-    intro();
+    setCount(1);
+    setHum(0.05);
+    runIntro();
     input.focus();
   });
 
-  // ---------- Start ----------
-  intro();
-  loadVoice();
+  // ---------- Device events ----------
+  document.addEventListener("visibilitychange", () => {
+    if (!entered) return;
+    if (document.hidden) {
+      leftAt = Date.now();
+      leaveCount++;
+    } else if (leftAt) {
+      if (leaveCount <= 3 && Date.now() - leftAt > 3000) {
+        remark("You left. I heard the door, though nothing moved. Then you came back. Good. It stayed.");
+      }
+      leftAt = 0;
+    }
+  });
+
+  window.addEventListener("offline", () => {
+    remark("The line went dead. Something cut it, not you.");
+  });
+
+  window.addEventListener("online", () => {
+    remark("The line came back. Something else was using it while it was dead.");
+  });
+
+  function onRotate() {
+    remark("You turned me sideways. I was facing the door.", "rotate");
+  }
+  if (screen.orientation && screen.orientation.addEventListener) {
+    screen.orientation.addEventListener("change", onRotate);
+  } else {
+    window.addEventListener("orientationchange", onRotate);
+  }
+
+  // ---------- Start: the room waits behind the entry screen ----------
+  enterBtn.addEventListener("click", () => {
+    entry.hidden = true;
+    entered = true;
+    sessionStart = Date.now();
+    startHum();
+    runIntro();
+    loadVoice();
+    if (window.innerWidth < 480) {
+      remark("You are holding me very close to your face. Nobody holds a phone that close unless they are hiding from something.", "narrow");
+    }
+  });
+})();
 </script>
 </body>
 </html>
